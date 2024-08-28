@@ -5,10 +5,22 @@ This repository holds a collection of custom ArcGIS Geoprocessing scripts for Ar
 * *Copy Features to Feature Dataset* - This tool takes a map input and copies all the feature layers in the map to the selected feature dataset. 
 
 # Guess CRS
-[insert parameter table here]
+| Parameter | Type | Description |
+|---|---|---|
+| Extent Envelope |     Envelope | Click the "map" button to automatically enter the active map's view as an extent envelope. |
+| Coordinate Reference System | Coordinate System | Select the spatial reference for the active map used to select the extent envelope.  |
 
 # Create Feature Datasets
-[insert parameter table here]
+| Parameter | Type | Description |
+|---|---|---|
+| Feature Dataset Names | String | The names of all the feature datasets to be created.  |
+| Workspace | Workspace | The workspace where the feature datasets will be saved.  |
+| Coordinate Reference System| Coordinate Reference System | The spatial reference of the feature datasets to be create in the workspace.  |
 
 # Copy Features to Feature Dataset
-[insert parameter table here]
+| Parameter | Type | Description |
+|---|---|---|
+| Workspace | Workspace | The workspace where the features will be copied. *Note*: You cannot have duplicate names in the same workspace, even if they are in different feature datasets.   |
+| Map | Map | The map where the existing features are to be copied over.  |
+| Feature Dataset | String | The name of the feature dataset to be created.  |
+| Coordinate Reference System | Coordinate Reference | The CRS of the feature dataset to be created.  |
