@@ -19,34 +19,25 @@ def create_feature_datasets(dataset_names, workspace, projection):
     projection (str): The spatial reference to apply to the feature datasets (e.g., WKID or projection string)
     """
     
-    arcpy.AddMessage(f"Creating feature datasets in '{workspace}'...")
-
     # Set the workspace
     arcpy.env.workspace = workspace
-
-    value_table = arcpy.ValueTable(1)
-    value_table.loadFromString(dataset_names)
     
     # Check if the workspace exists
     if not arcpy.Exists(workspace):
         arcpy.AddError(f"The workspace '{workspace}' does not exist.")
         return
 
-    for i in range(0, value_table.rowCount):
-        name = value_table.getValue(i, 0)
-        name = name.strip().strip("'\"")
-
-        arcpy.AddMessage(f"Creating feature dataset '{name}'...")
-
-        # Check if the feature dataset already exists
-        if arcpy.Exists(os.path.join(workspace, name)):
-            arcpy.AddWarning(f"Feature dataset '{name}' already exists. Skipping creation.")
-        else:
-                try:
-                    arcpy.CreateFeatureDataset_management(workspace, name, projection)
-                    arcpy.AddMessage(f"Feature dataset '{name}' created successfully.")
-                except Exception as e:
-                    arcpy.AddError(f"Failed to create feature dataset '{name}': {str(e)}")
+    # Create spatial reference object
+    spatial_ref = arcpy.SpatialReference(projection)
+    
+    for dataset_name in dataset_names:
+        try:
+            # Create feature dataset
+            arcpy.CreateFeatureDataset_management(workspace, dataset_name, spatial_ref)
+            arcpy.AddMessage(f"Feature dataset '{dataset_name}' created successfully.")
+        except Exception as e:
+            arcpy.AddError(f"Failed to create feature dataset '{dataset_name}': {str(e)}")
+            continue
 
 
 # This test allows the script to be used from the operating
