@@ -54,20 +54,15 @@ def CreateFeatureDataset(Workspace, FDSName, SpatialReference):
     # Remove the feature datasets that already exist in the workspace
     for i in unique_fds:
         if i in fds:
-            unique_fds.remove(i)
             arcpy.AddWarning(f"{i} already exists in the workspace. It will not be created.")
-
-    try:
-        for i in unique_fds:
+        elif i is None:
+            arcpy.AddWarning(f"{i} is not a valid feature dataset name.")
+        else:
             arcpy.AddMessage(f"Creating feature dataset {i}")
             FDSName = i
             arcpy.management.CreateFeatureDataset(out_dataset_path=Workspace, out_name=FDSName, spatial_reference=SpatialReference)
-                
+                    
             arcpy.AddMessage(f"{FDSName} feature dataset has been created.")
-    except arcpy.ExecuteError:
-        arcpy.AddError(str(arcpy.GetMessages(2)))
-    except Exception as e:
-        arcpy.AddError(str(e.args[0]))
 
 def CopyFeatures(FDSName, Workspace):
     """Copy local data to the feature dataset.
@@ -86,11 +81,14 @@ def CopyFeatures(FDSName, Workspace):
             Layer = value_table.getTrueValue(i, 0)
             FDS_Name = value_table.getTrueValue(i, 1)
             n += 1
-            new_lyrs = Layer.replace(" ", "_").replace("-", "_").replace(".", "").replace("\\", "_") + f"_s{n}"
+            new_lyrs = Layer.replace(" ", "_").replace("-", "_").replace(".", "").replace("\\", "_").replace("(", "").replace(")", "").replace("&", "and").replace(":", "") + f"_s{n}"
             new_lyrs = f"fc_{new_lyrs}" if new_lyrs[0].isdigit() else new_lyrs
-            lyr = os.path.join(Workspace, FDS_Name, new_lyrs)
-            arcpy.management.CopyFeatures(in_features=Layer, out_feature_class=lyr)
-            arcpy.AddMessage(f"{new_lyrs} has been copied to {FDS_Name}.")
+            if FDS_Name is None:
+                arcpy.AddWarning(f"{FDS_Name} is not a valid feature dataset name. {new_lyrs} will not be copied.")
+            else:
+                lyr = os.path.join(Workspace, FDS_Name, new_lyrs)
+                arcpy.management.CopyFeatures(in_features=Layer, out_feature_class=lyr)
+                arcpy.AddMessage(f"{new_lyrs} has been copied to {FDS_Name}.")
 
     except arcpy.ExecuteError:
         arcpy.AddError(str(arcpy.GetMessages(2)))
