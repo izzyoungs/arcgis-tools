@@ -74,7 +74,7 @@ def pivot_fields_to_double(input_fc, fields, output_fc):
             cursor.updateRow(row)
 
     # Delete original fields
-    arcpy.DeleteField_management(output_fc, fields)
+    # arcpy.DeleteField_management(output_fc, fields)
 
     arcpy.AddMessage(f"Pivoted feature class created: {output_fc}")
     return output_fc
