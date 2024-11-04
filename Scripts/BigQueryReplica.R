@@ -10,11 +10,12 @@ tool_exec <- function(in_params, out_params) {
   })
   arc.check_product()
   
+  arc.progress_label("Running script...")
+  
   # Extract input parameters
   print("Extracting input parameters")
   study_area_path <- in_params[[1]]        # Path to the study area dataset
   email <- in_params[[2]]                  # Email for authentication
-  # location_reporting <- in_params[[3]]     # Location reporting level
   output_path <- out_params[[1]]           # Output path
   
   # Authenticate with BigQuery
@@ -23,10 +24,14 @@ tool_exec <- function(in_params, out_params) {
   
   # Load the study area
   print("Loading study area")
-  study_area <- arc.open(study_area_path) %>%
-    arc.select() %>%
-    arc.data2sf() %>%
-    st_transform(4269)  # Transform to NAD83
+  suppressMessages(sf_use_s2(FALSE))
+  capture.output(study_area <- arc.open(study_area_path) |>
+      arc.select() |>
+      arc.data2sf() |>
+      st_transform(4269)|>
+      st_cast("POLYGON") |>
+      st_make_valid()) 
+  
   
   # Assign megaregion and county/state
   print("Determining megaregion and location")
@@ -34,10 +39,6 @@ tool_exec <- function(in_params, out_params) {
   megaregion <- region_info$megaregion
   state <- region_info$state
   county <- region_info$county
-  
-  # # Determine location reporting fields
-  # arc.progress_label("Determining location reporting fields")
-  # location_fields <- get_location_fields(location_reporting)
   
   # Construct the SQL query
   print("Constructing SQL query")
@@ -48,13 +49,15 @@ tool_exec <- function(in_params, out_params) {
   
   # Execute the SQL query
   print("Executing SQL query")
-  suppressMessages(results <- execute_sql_query(sql_query))
+  capture.output(results <- execute_sql_query(sql_query))
   
   # Export results
   print("Exporting results")
   suppressMessages(export_results(results, output_path))
   arc.progress_label("Process completed successfully")
 }
+
+  arc.progress_label("Process completed successfully")
 
 # Helper Functions
 
@@ -81,14 +84,16 @@ get_region_info <- function(study_area) {
   )
   
   # Load states shapefile
-  states <- tigris::states(year = 2020) %>%
-    select(STUSPS, NAME, geometry) %>%
+  states <- tigris::states(year = 2020, progress_bar = FALSE) |>
+    select(STUSPS, NAME, geometry) |>
     left_join(megaregions, by = "STUSPS")
   
-  # Spatial join to find intersecting states
-  study_area_union <- st_union(study_area)
-  intersecting_states <- st_join(states, st_sf(geometry = study_area_union),
-                                 join = st_intersects, left = FALSE)
+  # Spatial join to find majority intersecting state
+  intersecting_states <- st_join(states, st_sf(geometry = study_area),
+                                 join = st_intersects, left = FALSE) |>
+    mutate(area = st_area(geometry)) |>
+    slice_max(area)
+           
   
   # Extract megaregion, state, and county
   megaregion <- unique(intersecting_states$Megaregion) |> glue_sql()
