@@ -1,11 +1,15 @@
 tool_exec<- function(in_params, out_params){
   
-  arc.progress_label("Loading libraries...")
-
-  suppressMessages(require(sf))
-  suppressMessages(library(tidyverse))
-  suppressMessages(library(tidycensus))
-  suppressMessages(library(tigris))
+  # Load libraries
+  arc.progress_label("Loading libraries")
+  suppressMessages({
+    library(sf)
+    library(tidyverse)
+    library(tidycensus)
+    library(tigris)
+    library(arcgisbinding)
+  })
+  arc.check_product()
   
   arc.progress_label("Reading in data...")
   
