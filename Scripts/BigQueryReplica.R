@@ -3,7 +3,7 @@ tool_exec <- function(in_params, out_params) {
   arc.progress_label("Loading libraries")
   suppressMessages({
     library(sf)
-    library(dplyr)
+    library(tidyverse)
     library(bigrquery)
     library(glue)
     library(arcgisbinding)
@@ -25,12 +25,13 @@ tool_exec <- function(in_params, out_params) {
   # Load the study area
   print("Loading study area")
   suppressMessages(sf_use_s2(FALSE))
-  capture.output(study_area <- arc.open(study_area_path) |>
+  study_area <- arc.open(study_area_path) |>
       arc.select() |>
       arc.data2sf() |>
       st_transform(4269)|>
       st_cast("POLYGON") |>
-      st_make_valid()) 
+      st_make_valid() |>
+    suppressMessages()
   
   
   # Assign megaregion and county/state
@@ -49,7 +50,7 @@ tool_exec <- function(in_params, out_params) {
   
   # Execute the SQL query
   print("Executing SQL query")
-  capture.output(results <- execute_sql_query(sql_query))
+  results <- execute_sql_query(sql_query)
   
   # Export results
   print("Exporting results")
@@ -86,13 +87,15 @@ get_region_info <- function(study_area) {
   # Load states shapefile
   states <- tigris::states(year = 2020, progress_bar = FALSE) |>
     select(STUSPS, NAME, geometry) |>
-    left_join(megaregions, by = "STUSPS")
+    left_join(megaregions, by = "STUSPS")|>
+    suppressMessages()
   
   # Spatial join to find majority intersecting state
   intersecting_states <- st_join(states, st_sf(geometry = study_area),
                                  join = st_intersects, left = FALSE) |>
     mutate(area = st_area(geometry)) |>
-    slice_max(area)
+    slice_max(area) |>
+    suppressMessages()
            
   
   # Extract megaregion, state, and county
@@ -109,7 +112,7 @@ construct_sql_query <- function(megaregion, study_area, location_fields) {
   
   # Build the SQL query
   sql <- glue_sql("
-    SELECT distance_miles, mode, travel_purpose, start_lat, start_lng, end_lat, end_lng, pop.lat, pop.lng
+    SELECT pop.person_id, activity_id, distance_miles, mode, travel_purpose, pop.commute_mode, pop.household_size, pop.vehicles, pop.age_group, pop.sex, pop.race, pop.ethnicity, pop.employment, pop.education, start_lat, start_lng, end_lat, end_lng, pop.lat, pop.lng
     FROM `replica-customer.{megaregion}.{megaregion}_2024_Q2_thursday_trip` as trip
     LEFT JOIN `replica-customer.{megaregion}.{megaregion}_2024_Q2_population` as pop
     ON trip.person_id = pop.person_id
@@ -121,10 +124,21 @@ construct_sql_query <- function(megaregion, study_area, location_fields) {
 
 execute_sql_query <- function(sql_query) {
   tb <- bq_project_query("replica-customer", sql_query)
-  tb_return <- bq_table_download(tb)
+  tb_return <- bq_table_download(tb) |>
+    suppressMessages()
   
   tb_return |>
-    rename(home_lat = lat, home_lng = lng)
+    rename(home_lat = lat, home_lng = lng) |>
+    mutate(n = 1,
+           n2 = 1,
+           mode = paste0('mode_', mode),
+           travel_purpose = paste0('purpose_', travel_purpose)) |>
+    pivot_wider(names_from = travel_purpose, values_from = n, values_fill = list(value = 0),
+                values_fn = ~ mean(.x, na.rm = TRUE)) |>
+    pivot_wider(names_from = mode, values_from = n2, values_fill = list(value = 0),
+                values_fn = ~ mean(.x, na.rm = TRUE)) |>
+    mutate_if(is.numeric, ~ ifelse(is.na(.), 0, .))
+
 }
 
 export_results <- function(results, output_path) {
