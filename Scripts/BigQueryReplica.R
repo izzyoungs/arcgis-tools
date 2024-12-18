@@ -16,6 +16,9 @@ tool_exec <- function(in_params, out_params) {
   print("Extracting input parameters")
   study_area_path <- in_params[[1]]        # Path to the study area dataset
   email <- in_params[[2]]                  # Email for authentication
+  year <- in_params[[3]]                   # Year
+  quarter <- in_params[[4]]                # Quarter
+  day <- in_params[[5]]                    # Day
   output_path <- out_params[[1]]           # Output path
   
   # Authenticate with BigQuery
@@ -45,7 +48,10 @@ tool_exec <- function(in_params, out_params) {
   print("Constructing SQL query")
   sql_query <- construct_sql_query(
     megaregion,
-    study_area
+    study_area,
+    year, 
+    quarter,
+    day
   )
   
   # Execute the SQL query
@@ -54,11 +60,9 @@ tool_exec <- function(in_params, out_params) {
   
   # Export results
   print("Exporting results")
-  suppressMessages(export_results(results, output_path))
+  suppressMessages(arc.write(output_path, results))
   arc.progress_label("Process completed successfully")
 }
-
-  arc.progress_label("Process completed successfully")
 
 # Helper Functions
 
@@ -106,15 +110,39 @@ get_region_info <- function(study_area) {
   list(megaregion = megaregion, state = state, county = county)
 }
 
-construct_sql_query <- function(megaregion, study_area, location_fields) {
+construct_sql_query <- function(megaregion, study_area, year, quarter, day) {
   # Convert study area geometry to WKT
   study_area_wkt <- st_as_text(st_union(study_area))
+  
+  # if study_area_wkt is over 1000 characters, get the bounding box instead
+  if(nchar(study_area_wkt) > 1000) {
+    print("Study area WKT is too long, using bounding box instead")
+    bbox <- st_bbox(study_area)
+    
+    bbox_coords <- matrix(
+      c(
+        bbox["xmin"], bbox["ymin"],  # Bottom-left
+        bbox["xmax"], bbox["ymin"],  # Bottom-right
+        bbox["xmax"], bbox["ymax"],  # Top-right
+        bbox["xmin"], bbox["ymax"],  # Top-left
+        bbox["xmin"], bbox["ymin"]   # Close the polygon
+      ),
+      ncol = 2, byrow = TRUE
+    )
+    
+    bbox_polygon <- st_polygon(list(bbox_coords))
+    study_area_wkt <- st_as_text(bbox_polygon)
+  }
+  
+  year_sql <- glue_sql(year)
+  quarter_sql <- glue_sql(quarter)
+  day_sql <- glue_sql(day)
   
   # Build the SQL query
   sql <- glue_sql("
     SELECT pop.person_id, activity_id, distance_miles, mode, travel_purpose, pop.commute_mode, pop.household_size, pop.vehicles, pop.age_group, pop.sex, pop.race, pop.ethnicity, pop.employment, pop.education, start_lat, start_lng, end_lat, end_lng, pop.lat, pop.lng
-    FROM `replica-customer.{megaregion}.{megaregion}_2024_Q2_thursday_trip` as trip
-    LEFT JOIN `replica-customer.{megaregion}.{megaregion}_2024_Q2_population` as pop
+    FROM `replica-customer.{megaregion}.{megaregion}_{year_sql}_{quarter_sql}_{day_sql}_trip` as trip
+    LEFT JOIN `replica-customer.{megaregion}.{megaregion}_{year_sql}_{quarter_sql}_population` as pop
     ON trip.person_id = pop.person_id
     WHERE ST_WITHIN(ST_GEOGPOINT(end_lng, end_lat), ST_GEOGFROMTEXT({study_area_wkt}))
   ", .con = DBI::ANSI())
@@ -139,15 +167,4 @@ execute_sql_query <- function(sql_query) {
                 values_fn = ~ mean(.x, na.rm = TRUE)) |>
     mutate_if(is.numeric, ~ ifelse(is.na(.), 0, .))
 
-}
-
-export_results <- function(results, output_path) {
-  # Convert to spatial data frame if coordinates are included
-  if (any(grepl("latitude|longitude", names(results)))) {
-    # Assuming longitude and latitude are appropriately named
-    results <- st_as_sf(results, coords = c("longitude", "latitude"), crs = 4269)
-  }
-  
-  # Write to output
-  arc.write(output_path, results)
 }
