@@ -23,30 +23,27 @@ def fill_null_values(feature_class, fields, fill_value):
         if not arcpy.Exists(feature_class):
             raise FileNotFoundError(f"Feature class '{feature_class}' does not exist.")
         
-        arcpy.AddMessage("Checkpoint 1: Reached before cursor")
-
         field_list = arcpy.ListFields(feature_class)
-        field_types = {field.type for field in field_list}
+        field_type_map = {f.name: f.type for f in field_list}
 
-        numeric_types = {"Double", "Integer", "Single", "SmallInteger", "Float", "Long"}
+        user_fields = [f for f in fields if f in field_type_map]
+
+        numeric_types = {"Double", "Float", "Short", "Long"}
+        user_has_numeric = any(field_type_map[f] in numeric_types for f in user_fields)
 
         # Check that if the field type is numeric, the fill_value is not a string
-        if any(ft in numeric_types for ft in field_types):
-            # If numeric fields exist, ensure fill_value is numeric
-            if not fill_value.isnumeric():
-                raise ValueError(f"Fill value '{fill_value}' is not valid for numeric fields.")
-            # Convert to float or int as needed
-            fill_value = float(fill_value)
+        if user_has_numeric:
+            try:
+                fill_value = float(fill_value)
+            except ValueError:
+                raise ValueError(f"Fill value '{fill_value}' is not valid for numeric fields (must be castable to float).")
 
-        arcpy.AddMessage("Checkpoint 2: Reached before cursor")
-        
         # Start editing the feature class
         with arcpy.da.UpdateCursor(feature_class, fields) as cursor:
             updated_count = 0
             for row in cursor:
                 row_updated = False
                 for i, value in enumerate(row):
-                    arcpy.AddMessage(f"Value: {value}")
                     if value is None or value == "":
                         row[i] = fill_value
                         row_updated = True
@@ -55,8 +52,6 @@ def fill_null_values(feature_class, fields, fill_value):
                     updated_count += 1
         
         arcpy.AddMessage(f"Updated {updated_count} rows. Null values in fields {', '.join(fields)} have been successfully updated.")
-
-        arcpy.AddMessage("Checkpoint 3: Finished updating rows")
     
     except Exception as e:
         print(f"An error occurred: {e}")
