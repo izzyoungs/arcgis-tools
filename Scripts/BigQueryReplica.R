@@ -15,10 +15,12 @@ tool_exec <- function(in_params, out_params) {
   # Extract input parameters
   print("Extracting input parameters")
   study_area_path <- in_params[[1]]        # Path to the study area dataset
-  email <- in_params[[2]]                  # Email for authentication
-  year <- in_params[[3]]                   # Year
-  quarter <- in_params[[4]]                # Quarter
-  day <- in_params[[5]]                    # Day
+  state_abb <- in_params[[2]]              # State
+  county_name <- in_params[[3]]            # County
+  email <- in_params[[4]]                  # Email for authentication
+  year <- in_params[[5]]                   # Year
+  quarter <- in_params[[6]]                # Quarter
+  day <- in_params[[7]]                    # Day
   output_path <- out_params[[1]]           # Output path
   
   # Authenticate with BigQuery
@@ -26,29 +28,40 @@ tool_exec <- function(in_params, out_params) {
   bq_auth(email = email)
   
   # Load the study area
-  print("Loading study area")
-  suppressMessages(sf_use_s2(FALSE))
-  study_area <- arc.open(study_area_path) |>
+  print("Checking and loading study area")
+  # If study area path is not empty, load the study area
+  if(length(study_area_path) != 0) {
+    suppressMessages(sf_use_s2(FALSE))
+    study_area <- arc.open(study_area_path) |>
       arc.select() |>
       arc.data2sf() |>
       st_transform(4269)|>
       st_cast("POLYGON") |>
       st_make_valid() |>
-    suppressMessages()
+      suppressMessages()
+  } else {
+    print("Study area path is empty, using state name and county to determine study area")
+  }
   
   
   # Assign megaregion and county/state
   print("Determining megaregion and location")
-  region_info <- get_region_info(study_area)
+  region_info <- get_region_info(study_area, state_abb, county_name)
   megaregion <- region_info$megaregion
-  state <- region_info$state
-  county <- region_info$county
-  
+  if(length(study_area_path) != 0){
+    state <- region_info$state
+    county <- region_info$county
+  } else {
+    county_fips <- region_info$county_fips
+    study_area <- NULL
+  }
+
   # Construct the SQL query
   print("Constructing SQL query")
   sql_query <- construct_sql_query(
     megaregion,
     study_area,
+    county_fips,
     year, 
     quarter,
     day
@@ -59,14 +72,18 @@ tool_exec <- function(in_params, out_params) {
   results <- execute_sql_query(sql_query)
   
   # Export results
-  print("Exporting results")
-  suppressMessages(arc.write(output_path, results))
-  arc.progress_label("Process completed successfully")
-}
+  if(nrow(results) == 0) {
+    arc.progress_label("No results found. Please check the input parameters.")
+    stop()
+  } else {
+    print(paste0("Exporting results: ", nrow(results), " rows"))
+    suppressMessages(arc.write(output_path, results))
+    print("Process completed successfully")
+  } }
 
 # Helper Functions
 
-get_region_info <- function(study_area) {
+get_region_info <- function(study_area, state_abb, county_name) {
   # Megaregion mapping
   megaregions <- data.frame(
     Megaregion = c("alaska", "cal_nev", "cal_nev", "great_lakes", "great_lakes",
@@ -88,70 +105,103 @@ get_region_info <- function(study_area) {
                "TN", "AZ", "CO", "NM", "OK", "TX", "UT")
   )
   
-  # Load states shapefile
-  states <- tigris::states(year = 2020, progress_bar = FALSE) |>
-    select(STUSPS, NAME, geometry) |>
-    left_join(megaregions, by = "STUSPS")|>
-    suppressMessages()
+  megaregions_fips <- left_join(tigris::fips_codes, megaregions, by = c("state" = "STUSPS"))
   
-  # Spatial join to find majority intersecting state
-  intersecting_states <- st_join(states, st_sf(geometry = study_area),
-                                 join = st_intersects, left = FALSE) |>
-    mutate(area = st_area(geometry)) |>
-    slice_max(area) |>
-    suppressMessages()
-           
-  
-  # Extract megaregion, state, and county
-  megaregion <- unique(intersecting_states$Megaregion) |> glue_sql()
-  state <- unique(intersecting_states$STUSPS)
-  county <- NA  # County can be extracted similarly if needed
-  
-  list(megaregion = megaregion, state = state, county = county)
-}
-
-construct_sql_query <- function(megaregion, study_area, year, quarter, day) {
-  # Convert study area geometry to WKT
-  study_area_wkt <- st_as_text(st_union(study_area))
-  
-  # if study_area_wkt is over 1000 characters, get the bounding box instead
-  if(nchar(study_area_wkt) > 1000) {
-    print("Study area WKT is too long, using bounding box instead")
-    bbox <- st_bbox(study_area)
+  if(length(state_abb) == 0){
+    print("Determining location based on study area")
+    # Load states shapefile
+    states <- tigris::states(year = 2020, progress_bar = FALSE) |>
+      select(STUSPS, NAME, geometry) |>
+      left_join(megaregions, by = "STUSPS")|>
+      suppressMessages()
     
-    bbox_coords <- matrix(
-      c(
-        bbox["xmin"], bbox["ymin"],  # Bottom-left
-        bbox["xmax"], bbox["ymin"],  # Bottom-right
-        bbox["xmax"], bbox["ymax"],  # Top-right
-        bbox["xmin"], bbox["ymax"],  # Top-left
-        bbox["xmin"], bbox["ymin"]   # Close the polygon
-      ),
-      ncol = 2, byrow = TRUE
-    )
+    # Spatial join to find majority intersecting state
+    intersecting_states <- st_join(states, st_sf(geometry = study_area),
+                                   join = st_intersects, left = FALSE) |>
+      mutate(area = st_area(geometry)) |>
+      slice_max(area) |>
+      suppressMessages()
     
-    bbox_polygon <- st_polygon(list(bbox_coords))
-    study_area_wkt <- st_as_text(bbox_polygon)
+    # Extract megaregion, state, and county
+    megaregion <- unique(intersecting_states$Megaregion) |> glue_sql()
+    state <- unique(intersecting_states$STUSPS)
+    county <- NA  # County can be extracted similarly if needed
+    
+    list(megaregion = megaregion, state = state, county = county)
+    
+  } else {
+      fips_for_county <- megaregions_fips |>
+        filter(state == state_abb, county == county_name)
+      megaregion <- glue_sql(fips_for_county$Megaregion)
+      county_fips <- glue_sql(paste0(fips_for_county$state_code, fips_for_county$county_code))
+      
+      list(megaregion = megaregion, county_fips = county_fips)
   }
   
+
+}
+
+construct_sql_query <- function(megaregion, study_area, county_fips, year, quarter, day) {
   year_sql <- glue_sql(year)
   quarter_sql <- glue_sql(quarter)
   day_sql <- glue_sql(day)
   
-  # Build the SQL query
-  sql <- glue_sql("
+  if(length(study_area) != 0) {
+    # Convert study area geometry to WKT
+    study_area_wkt <- st_as_text(st_union(study_area))
+    
+    # if study_area_wkt is over 1000 characters, get the bounding box instead
+    if(nchar(study_area_wkt) > 1000) {
+      print("Study area WKT is too long, using bounding box instead")
+      bbox <- st_bbox(study_area)
+      
+      bbox_coords <- matrix(
+        c(
+          bbox["xmin"], bbox["ymin"],  # Bottom-left
+          bbox["xmax"], bbox["ymin"],  # Bottom-right
+          bbox["xmax"], bbox["ymax"],  # Top-right
+          bbox["xmin"], bbox["ymax"],  # Top-left
+          bbox["xmin"], bbox["ymin"]   # Close the polygon
+        ),
+        ncol = 2, byrow = TRUE
+      )
+      
+      bbox_polygon <- st_polygon(list(bbox_coords))
+      study_area_wkt <- st_as_text(bbox_polygon)
+      
+      # Build the SQL query
+      sql <- glue_sql("
     SELECT pop.person_id, activity_id, distance_miles, mode, travel_purpose, pop.commute_mode, pop.household_size, pop.vehicles, pop.age_group, pop.sex, pop.race, pop.ethnicity, pop.employment, pop.education, start_lat, start_lng, end_lat, end_lng, pop.lat, pop.lng
     FROM `replica-customer.{megaregion}.{megaregion}_{year_sql}_{quarter_sql}_{day_sql}_trip` as trip
     LEFT JOIN `replica-customer.{megaregion}.{megaregion}_{year_sql}_{quarter_sql}_population` as pop
     ON trip.person_id = pop.person_id
     WHERE ST_WITHIN(ST_GEOGPOINT(end_lng, end_lat), ST_GEOGFROMTEXT({study_area_wkt}))
   ", .con = DBI::ANSI())
+      
+      sql
+    }
+  } else if(length(county_fips) == 0) {
+    print("Please provide a study area or state/county to determine the location for Replica trips.")
+    stop()
+  } else {
+    
+    # Build the SQL query
+    sql <- glue_sql("
+    SELECT pop.person_id, activity_id, distance_miles, mode, travel_purpose, pop.commute_mode, pop.household_size, pop.vehicles, pop.age_group, pop.sex, pop.race, pop.ethnicity, pop.employment, pop.education, start_lat, start_lng, end_lat, end_lng, pop.lat, pop.lng
+    FROM `replica-customer.{megaregion}.{megaregion}_{year_sql}_{quarter_sql}_{day_sql}_trip` as trip
+    LEFT JOIN `replica-customer.{megaregion}.{megaregion}_{year_sql}_{quarter_sql}_population` as pop
+    ON trip.person_id = pop.person_id
+    WHERE LEFT(destination_bgrp, 5) = '{county_fips}'
+  ", .con = DBI::ANSI())
+    
+    sql
+  }
   
-  sql
 }
 
 execute_sql_query <- function(sql_query) {
   tb <- bq_project_query("replica-customer", sql_query)
+  
   tb_return <- bq_table_download(tb) |>
     suppressMessages()
   
@@ -166,5 +216,5 @@ execute_sql_query <- function(sql_query) {
     pivot_wider(names_from = mode, values_from = n2, values_fill = list(value = 0),
                 values_fn = ~ mean(.x, na.rm = TRUE)) |>
     mutate_if(is.numeric, ~ ifelse(is.na(.), 0, .))
-
+  
 }
