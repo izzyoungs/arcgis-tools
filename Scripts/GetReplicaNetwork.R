@@ -5,12 +5,15 @@
 #' Copyright: © 2024 Izzy Youngs
 #'
 #' Inputs:
-#'   - State Abbreviation: (string) State abbreviation (e.g., 'OR')
-#'   - County Name: (string) County name (e.g., 'Multnomah County')
-#'   - Income: (string) 'low-income' or 'none'
+#'  - study_area: A feature class or shapefile containing the study area.
+#'  - equity_area: A feature class or shapefile containing the equity area.
+#'  - year: The year for which to retrieve network volumes.
+#'  - quarter: The quarter for which to retrieve network volumes.
+#'  - day: The day for which to retrieve network volumes.
+#'  - email: The email address for BigQuery authentication.
 #'
 #' Outputs:
-#'   - An output feature class or shapefile containing network volumes.
+#'   - An output feature class containing network volumes.
 # -----------------------------------------------------------------------
 
 # Load libraries
@@ -30,15 +33,34 @@ tool_exec <- function(in_params, out_params) {
 
   # Extract input parameters
   print("Extracting input parameters")
-  state_abb <- in_params[[1]]        # State abbreviation
-  county_name <- in_params[[2]]      # County name
-  income <- in_params[[3]]           # Income type
-  year <- in_params[[4]]             # Year
-  quarter <- in_params[[5]]          # Quarter
-  day <- in_params[[6]]              # Day
-  breakdown <- in_params[[7]]        # Breakdown
-  email <- in_params[[8]]           # Email for authentication
+  study_area <- arc.open(in_params[[1]]) |> arc.select()
+  # conditional, if the in_params[[2]] is null write NULL to equity_area_sf otherwise open the file
+  equity_area <- if(is.null(in_params[[2]])) NULL else arc.open(in_params[[2]]) |> arc.select()
+  year <- in_params[[3]]             # Year
+  quarter <- in_params[[4]]          # Quarter
+  day <- in_params[[5]]              # Day
+  email <- in_params[[6]]           # Email for authentication
   output_path <- out_params[[1]]    # Output path
+  
+  if (is.null(equity_area)) {
+    print("Equity area not provided")
+  } else {
+    print("Equity area provided")
+  }
+  
+  study_area_sf <- arc.data2sf(study_area) |> 
+    st_transform(4326) |>
+    st_make_valid() |>
+    summarize()
+  
+  if(is.null(equity_area)) equity_area_wkt <- 'None' |> glue_sql()
+  else{equity_area_sf <- arc.data2sf(equity_area) |> 
+    st_transform(4326) |>
+    st_make_valid() |>
+    summarize()
+    equity_area_wkt <- st_as_text(equity_area_sf$geom) |> glue_sql()}
+  
+  study_area_wkt <- st_as_text(study_area_sf$geom) |> glue_sql()
 
   # Authenticate with BigQuery
   print("Authenticating with BigQuery")
@@ -65,32 +87,41 @@ tool_exec <- function(in_params, out_params) {
                "TN", "AZ", "CO", "NM", "OK", "TX", "UT")
   )
 
-  megaregions_fips <- left_join(tigris::fips_codes, megaregions, by = c("state" = "STUSPS"))
+  megaregions_fips <- left_join(tigris::states(cb = TRUE, progress_bar = FALSE), megaregions) |>
+    suppressMessages()
 
   # Read megaregion data
   fips_for_county <- megaregions_fips |>
-    filter(state == state_abb, county == county_name)
-
+    st_transform(4326) |>
+    st_intersection(study_area_sf) |>
+    st_drop_geometry() |>
+    slice(1L) |>
+    suppressMessages() |>
+    suppressWarnings()
 
     region <- glue_sql(fips_for_county$Megaregion)
-    county_fips <- glue_sql(paste0(fips_for_county$state_code, fips_for_county$county_code))
     year <- glue_sql(year)
     quarter <- glue_sql(quarter)
     day <- glue_sql(day)
+    
 
-    # Construct income condition
-    income_filter <- if (income == 'Low-Income') glue_sql("WHERE is_low_income > 0") else ""
+    print(paste0("Running SQL query for ", region, " for ", year, " ", quarter, " ", day, "..."))
 
     # SQL Query
     sql_query <- glue_sql("WITH aoe AS (
-  SELECT geom
-  FROM `replica-customer.Geos.cty`
-  WHERE raw_id = '{county_fips}'
+  SELECT ST_GEOGFROMTEXT('{study_area_wkt}') AS geom
+),
+
+equity_areas AS (
+  SELECT CASE
+           WHEN '{equity_area_wkt}' = 'None'
+             THEN NULL
+           ELSE ST_GEOGFROMTEXT('{equity_area_wkt}')
+         END AS geom
 ),
 
 network_links AS (
-  SELECT n.stableEdgeId, n.streetName, n.speed, n.distance, n.highway, n.flags, n.lanes,
-  ST_Azimuth(st_startpoint(n.geometry), st_endpoint(n.geometry))*57.2958 as degrees, n.geometry
+  SELECT n.stableEdgeId, n.streetName, n.speed, n.distance, n.highway, n.flags, n.lanes, n.geometry
   FROM `replica-customer.{region}.{region}_2024_{quarter}_network_segments` n
   JOIN aoe a ON ST_INTERSECTS(a.geom, n.geometry)
 ),
@@ -109,28 +140,24 @@ base_data AS (
       ELSE 'other'
     END AS v_mode,
     CASE
-      WHEN household_size = '1_person' AND household_income <= 66100 THEN 1
-      WHEN household_size = '2_person' AND household_income <= 75550 THEN 1
-      WHEN household_size = '3_person' AND household_income <= 85000 THEN 1
-      WHEN household_size = '4_person' AND household_income <= 94400 THEN 1
-      WHEN household_size = '5_person' AND household_income <= 102000 THEN 1
-      WHEN household_size = '6_person' AND household_income <= 109550 THEN 1
-      WHEN household_size = '7_person' AND household_income <= 117100 THEN 1
-      WHEN household_size = '7_plus_person' AND household_income <= 124650 THEN 1
-      ELSE 0
-    END AS is_low_income,
+      WHEN ea.geom IS NULL THEN '1'
+      WHEN ST_WITHIN(ST_GEOGPOINT(pop.lng, pop.lat), ea.geom) THEN '1'
+      ELSE '0'
+    END AS is_equity_area,
     COUNT(*) AS volume
-  FROM `replica-customer.{region}.{region}_2024_{quarter}_{day}_trip` AS t
+  FROM `replica-customer.{region}.{region}_{year}_{quarter}_{day}_trip` AS t
   CROSS JOIN UNNEST(network_link_ids) AS stableEdgeId
   JOIN network_links AS n ON n.stableEdgeId = stableEdgeId
-  LEFT JOIN `replica-customer.{region}.{region}_2024_{quarter}_population` pop
+  JOIN `replica-customer.{region}.{region}_{year}_{quarter}_population` pop
     ON t.person_id = pop.person_id
-  GROUP BY stableEdgeId, mode, household_size, household_income
+  CROSS JOIN equity_areas ea
+  WHERE t.travel_purpose != 'HOME'
+  GROUP BY stableEdgeId, v_mode, is_equity_area
 ),
 filtered_data AS (
   SELECT *
   FROM base_data
-  {income_filter}
+  WHERE is_equity_area = '1'
 ),
 loaded_links AS (
   SELECT
@@ -159,7 +186,6 @@ n.distance,
 n.highway,
 n.flags,
 n.lanes,
-n.degrees,
 n.geometry,
 ll.auto,
 ll.carpool,
@@ -173,22 +199,33 @@ FROM network_links as n
 LEFT JOIN loaded_links as ll ON n.stableEdgeId = ll.stableEdgeId
 )
 
-SELECT stableEdgeID, streetname, speed, distance, highway, flags, lanes, degrees, auto, carpool, commercial, tnc, biking, walking, transit, other, geometry,
+SELECT stableEdgeID, streetname, speed, distance, highway, flags, lanes, auto, carpool, commercial, tnc, biking, walking, transit, other, geometry,
 FROM loaded_network", .con = DBI::ANSI()) |>
-      suppressMessages()
+      suppressMessages()|>
+  suppressWarnings()
 
     # Query BigQuery
     tb <- bq_project_query("replica-customer", sql_query) |>
-      suppressMessages()
+      suppressMessages() |>
+      suppressWarnings()
 
     df_network <- bq_table_download(tb) |>
-      suppressMessages()
+      suppressMessages()|>
+      suppressWarnings()
 
     # Convert to spatial
     sf_network <- st_as_sf(df_network, wkt = 'geometry', crs = 4326) |>
-      suppressMessages()
+      st_filter(study_area_sf) |>
+      st_make_valid() |>
+      suppressMessages()|>
+      suppressWarnings()
+    
+    if(nrow(sf_network) > 60000) {
+      stop("Network too large. Please select a smaller study area.")
+    }
 
     # Return as ArcGIS output
-    arc.write(output_path, sf_network) |>
-      suppressMessages()
+    arc.write(output_path, sf_network, overwrite = TRUE, validate = TRUE) |>
+      suppressMessages()|>
+      suppressWarnings()
 }
