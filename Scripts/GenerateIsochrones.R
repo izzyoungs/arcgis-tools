@@ -35,7 +35,10 @@ tool_exec <- function(in_params, out_params) {
   input_geom <- arc.open(in_params[[1]]) |> arc.select() # Geometry
   input_profile <- in_params[[2]] # Profile
   input_time <- in_params[[3]] |> as.numeric() # Time
+  access_token <- in_params[[4]] # Access token
   output_path <- out_params[[1]]  # Output path
+  
+  if(length(access_token) == 0){access_token = NULL}
   
   input_profile <- lapply(input_profile, tolower)
   input_profile <- gsub("driving in traffic", "driving-traffic", input_profile)
@@ -89,7 +92,7 @@ tool_exec <- function(in_params, out_params) {
     depart_at = "2025-03-31T09:00",
     denoise = .25,
     generalize = 5,
-    access_token = "pk.eyJ1IjoiaXp6eW91bmdzIiwiYSI6ImNrODI3MHgzbjBqZXkzaHBxdGpxZDh5dWYifQ.H95COOShNs0hOU2d8wuSdg",
+    access_token = access_token,
     geometry = "polygon",
     output = "sf",
     rate_limit = 300,
