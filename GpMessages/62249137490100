@@ -1,0 +1,5 @@
+﻿<?xml version="1.0" encoding="utf-8"?><messages><msg code="0" type="2">Start Time: Thursday, May 8, 2025 3:48:15 PM</msg><msg code="0" type="0">[1] "Extracting bounding box from input study area..."</msg><msg code="0" type="0">[1] "Fetching Overture buildings..."</msg><msg code="0" type="0">Processing data for ... s3://overturemaps-us-west-2/release/2025-01-22.0/theme=buildings/type=building/ ...</msg><msg code="0" type="0">
+  |                                                                            
+  |                                                                      |   0%
+  |                                                                            
+  |======================================================================| 100%</msg><msg code="0" type="0">Data processing complete. Time taken: 43.15652 seconds.</msg><msg code="0" type="0">[1] "Writing Overture buildings to output geodatabase..."</msg><msg code="0" type="0">[1] "Process complete."</msg><msg code="0" type="3">Succeeded at Thursday, May 8, 2025 3:49:06 PM (Elapsed Time: 50.49 seconds)</msg></messages>
