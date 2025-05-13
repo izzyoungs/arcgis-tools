@@ -35,32 +35,70 @@ tool_exec <- function(in_params, out_params) {
   print("Extracting input parameters")
   study_area <- arc.open(in_params[[1]]) |> arc.select()
   # conditional, if the in_params[[2]] is null write NULL to equity_area_sf otherwise open the file
-  equity_area <- if(is.null(in_params[[2]])) NULL else arc.open(in_params[[2]]) |> arc.select()
-  year <- in_params[[3]]             # Year
-  quarter <- in_params[[4]]          # Quarter
-  day <- in_params[[5]]              # Day
-  email <- in_params[[6]]           # Email for authentication
-  output_path <- out_params[[1]]    # Output path
-  
+  equity_area <- if (is.null(in_params[[2]])) NULL else arc.open(in_params[[2]]) |> arc.select()
+  year <- in_params[[3]] # Year
+  quarter <- in_params[[4]] # Quarter
+  day <- in_params[[5]] # Day
+  email <- in_params[[6]] # Email for authentication
+  output_path <- out_params[[1]] # Output path
+
   if (is.null(equity_area)) {
     print("Equity area not provided")
   } else {
     print("Equity area provided")
   }
-  
-  study_area_sf <- arc.data2sf(study_area) |> 
+
+  study_area_sf <- arc.data2sf(study_area) |>
     st_transform(4326) |>
     st_make_valid() |>
     summarize()
-  
-  if(is.null(equity_area)) equity_area_wkt <- 'None' |> glue_sql()
-  else{equity_area_sf <- arc.data2sf(equity_area) |> 
-    st_transform(4326) |>
-    st_make_valid() |>
-    summarize()
-    equity_area_wkt <- st_as_text(equity_area_sf$geom) |> glue_sql()}
-  
+
+  if (is.null(equity_area)) {
+    equity_area_wkt <- "None" |> glue_sql()
+  } else {
+    equity_area_sf <- arc.data2sf(equity_area) |>
+      st_transform(4326) |>
+      st_make_valid() |>
+      summarize()
+    equity_area_wkt <- st_as_text(equity_area_sf$geom) |> glue_sql()
+
+    if (nchar(equity_area_wkt) > 1000) {
+      bbox_equity <- st_bbox(equity_area_sf)
+
+      bbox_equity_coords <- matrix(
+        c(
+          bbox_equity["xmin"], bbox_equity["ymin"], # Bottom-left
+          bbox_equity["xmax"], bbox_equity["ymin"], # Bottom-right
+          bbox_equity["xmax"], bbox_equity["ymax"], # Top-right
+          bbox_equity["xmin"], bbox_equity["ymax"], # Top-left
+          bbox_equity["xmin"], bbox_equity["ymin"] # Close the polygon
+        ),
+        ncol = 2, byrow = TRUE
+      )
+
+      bbox_equity_polygon <- st_polygon(list(bbox_equity_coords))
+      equity_area_wkt <- st_as_text(bbox_equity_polygon) |> glue_sql()
+    }
+  }
+
   study_area_wkt <- st_as_text(study_area_sf$geom) |> glue_sql()
+  if (nchar(study_area_wkt) > 1000) {
+    bbox_study <- st_bbox(study_area_sf)
+
+    bbox_study_coords <- matrix(
+      c(
+        bbox_study["xmin"], bbox_study["ymin"], # Bottom-left
+        bbox_study["xmax"], bbox_study["ymin"], # Bottom-right
+        bbox_study["xmax"], bbox_study["ymax"], # Top-right
+        bbox_study["xmin"], bbox_study["ymax"], # Top-left
+        bbox_study["xmin"], bbox_study["ymin"] # Close the polygon
+      ),
+      ncol = 2, byrow = TRUE
+    )
+
+    bbox_study_polygon <- st_polygon(list(bbox_study_coords))
+    study_area_wkt <- st_as_text(bbox_study_polygon) |> glue_sql()
+  }
 
   # Authenticate with BigQuery
   print("Authenticating with BigQuery")
@@ -68,23 +106,27 @@ tool_exec <- function(in_params, out_params) {
 
   # Create megaregions data
   megaregions <- data.frame(
-    Megaregion = c("alaska", "cal_nev", "cal_nev", "great_lakes", "great_lakes",
-                   "great_lakes", "great_lakes", "great_lakes", "great_lakes",
-                   "hawaii", "mid_atlantic", "mid_atlantic", "mid_atlantic",
-                   "mid_atlantic", "mid_atlantic", "north_atlantic", "north_atlantic",
-                   "north_atlantic", "north_atlantic", "north_atlantic", "north_central",
-                   "north_central", "north_central", "north_central", "north_central",
-                   "north_central", "north_central", "northeast", "northeast",
-                   "northeast", "northeast", "northeast", "northwest", "northwest",
-                   "northwest", "northwest", "northwest", "south_atlantic",
-                   "south_atlantic", "south_atlantic", "south_central", "south_central",
-                   "south_central", "south_central", "south_central", "southwest",
-                   "southwest", "southwest", "southwest", "southwest", "southwest"),
-    STUSPS = c("AK", "CA", "NV", "IL", "IN", "KY", "MI", "OH", "WI", "HI", "DC",
-               "MD", "NC", "VA", "WV", "CT", "DE", "NJ", "NY", "PA", "IA", "KS",
-               "MN", "MO", "ND", "NE", "SD", "MA", "ME", "NH", "RI", "VT", "ID",
-               "MT", "OR", "WA", "WY", "FL", "GA", "SC", "AL", "AR", "LA", "MS",
-               "TN", "AZ", "CO", "NM", "OK", "TX", "UT")
+    Megaregion = c(
+      "alaska", "cal_nev", "cal_nev", "great_lakes", "great_lakes",
+      "great_lakes", "great_lakes", "great_lakes", "great_lakes",
+      "hawaii", "mid_atlantic", "mid_atlantic", "mid_atlantic",
+      "mid_atlantic", "mid_atlantic", "north_atlantic", "north_atlantic",
+      "north_atlantic", "north_atlantic", "north_atlantic", "north_central",
+      "north_central", "north_central", "north_central", "north_central",
+      "north_central", "north_central", "northeast", "northeast",
+      "northeast", "northeast", "northeast", "northwest", "northwest",
+      "northwest", "northwest", "northwest", "south_atlantic",
+      "south_atlantic", "south_atlantic", "south_central", "south_central",
+      "south_central", "south_central", "south_central", "southwest",
+      "southwest", "southwest", "southwest", "southwest", "southwest"
+    ),
+    STUSPS = c(
+      "AK", "CA", "NV", "IL", "IN", "KY", "MI", "OH", "WI", "HI", "DC",
+      "MD", "NC", "VA", "WV", "CT", "DE", "NJ", "NY", "PA", "IA", "KS",
+      "MN", "MO", "ND", "NE", "SD", "MA", "ME", "NH", "RI", "VT", "ID",
+      "MT", "OR", "WA", "WY", "FL", "GA", "SC", "AL", "AR", "LA", "MS",
+      "TN", "AZ", "CO", "NM", "OK", "TX", "UT"
+    )
   )
 
   megaregions_fips <- left_join(tigris::states(cb = TRUE, progress_bar = FALSE), megaregions) |>
@@ -99,32 +141,42 @@ tool_exec <- function(in_params, out_params) {
     suppressMessages() |>
     suppressWarnings()
 
-    region <- glue_sql(fips_for_county$Megaregion)
-    year <- glue_sql(year)
-    quarter <- glue_sql(quarter)
-    day <- glue_sql(day)
-    
+  region <- glue_sql(fips_for_county$Megaregion)
+  year <- glue_sql(year)
+  quarter <- glue_sql(quarter)
+  day <- glue_sql(day)
 
-    print(paste0("Running SQL query for ", region, " for ", year, " ", quarter, " ", day, "..."))
 
-    # SQL Query
-    sql_query <- glue_sql("WITH aoe AS (
+  print(paste0("Running SQL query for ", region, " for ", year, " ", quarter, " ", day, "..."))
+
+  # SQL Query
+  sql_query <- glue_sql("
+/* ───────────────────────── 1.  Study area & equity geometry ───────────────────────── */
+WITH aoe AS (
   SELECT ST_GEOGFROMTEXT('{study_area_wkt}') AS geom
 ),
-
 equity_areas AS (
   SELECT CASE
-           WHEN '{equity_area_wkt}' = 'None'
-             THEN NULL
+           WHEN '{equity_area_wkt}' = 'None' THEN NULL
            ELSE ST_GEOGFROMTEXT('{equity_area_wkt}')
          END AS geom
 ),
 
+/* ───────────────────────── 2.  Network links inside study area ────────────────────── */
 network_links AS (
-  SELECT n.stableEdgeId, n.streetName, n.speed, n.distance, n.highway, n.flags, n.lanes, n.geometry
-  FROM `replica-customer.{region}.{region}_2024_{quarter}_network_segments` n
-  JOIN aoe a ON ST_INTERSECTS(a.geom, n.geometry)
+  SELECT n.stableEdgeId,
+         n.streetName,
+         n.speed,
+         n.distance,
+         n.highway,
+         n.flags,
+         n.lanes,
+         n.geometry
+  FROM  `replica-customer.{region}.{region}_2024_{quarter}_network_segments` n
+  JOIN  aoe a ON ST_INTERSECTS(a.geom, n.geometry)
 ),
+
+/* ───────────────────────── 3.  Trip records exploded to edges ─────────────────────── */
 
 base_data AS (
   SELECT
@@ -140,7 +192,7 @@ base_data AS (
       ELSE 'other'
     END AS v_mode,
     CASE
-      WHEN ea.geom IS NULL THEN '1'
+      WHEN ea.geom IS NULL THEN '0'
       WHEN ST_WITHIN(ST_GEOGPOINT(pop.lng, pop.lat), ea.geom) THEN '1'
       ELSE '0'
     END AS is_equity_area,
@@ -154,78 +206,142 @@ base_data AS (
   WHERE t.travel_purpose != 'HOME'
   GROUP BY stableEdgeId, v_mode, is_equity_area
 ),
-filtered_data AS (
+
+/* ───────────────────────── 4a.  Total volumes by mode (all trips) ─────────────────── */
+total_links AS (
   SELECT *
-  FROM base_data
-  WHERE is_equity_area = '1'
+  FROM (
+        SELECT stableEdgeId, v_mode, SUM(volume) AS volume
+        FROM   base_data
+        GROUP  BY stableEdgeId, v_mode
+       )
+  PIVOT ( SUM(volume) FOR v_mode IN
+          ('auto','tnc','biking','carpool','walking','transit','commercial','other') )
 ),
-loaded_links AS (
+
+/* ───────────────────────── 4b.  Equity‑area volumes by mode ───────────────────────── */
+equity_links AS (
+  SELECT *
+  FROM (
+        SELECT stableEdgeId, v_mode, SUM(volume) AS volume
+        FROM   base_data
+        WHERE  is_equity_area = '1'
+        GROUP  BY stableEdgeId, v_mode
+       )
+  PIVOT ( SUM(volume) FOR v_mode IN
+          ('auto','tnc','biking','carpool','walking','transit','commercial','other') )
+),
+
+/* ───────────────────────── 5.  Join totals + equity and derive roll‑ups ───────────── */
+
+joined_links AS (
   SELECT
-    stableEdgeId,
-    IFNULL(volume_auto, 0) AS auto,
-    IFNULL(volume_tnc, 0) AS tnc,
-    IFNULL(volume_biking, 0) AS biking,
-    IFNULL(volume_carpool, 0) AS carpool,
-    IFNULL(volume_walking, 0) AS walking,
-    IFNULL(volume_transit, 0) AS transit,
-    IFNULL(volume_commercial, 0) AS commercial,
-    IFNULL(volume_other, 0) AS other
-  FROM filtered_data
-  PIVOT (
-    SUM(volume) AS volume
-    FOR v_mode IN ('auto', 'tnc', 'biking', 'carpool', 'walking', 'transit', 'commercial', 'other')
-  )
+     COALESCE(t.stableEdgeId, e.stableEdgeId)            AS stableEdgeId,
+
+     /* ---- mode‑specific totals ---- */
+     IFNULL(t.auto,0) AS auto_total, IFNULL(e.auto,0) AS auto_equity,
+     IFNULL(t.tnc,0)  AS tnc_total, IFNULL(e.tnc,0) AS tnc_equity,
+     IFNULL(t.biking,0)  AS bike_total, IFNULL(e.biking,0) AS bike_equity,
+     IFNULL(t.walking,0)  AS walk_total, IFNULL(e.walking,0) AS walk_equity,
+     IFNULL(t.transit,0)  AS transit_total, IFNULL(e.transit,0) AS transit_equity,
+     IFNULL(t.carpool,0)  AS carpool_total, IFNULL(e.carpool,0) AS carpool_equity,
+     IFNULL(t.commercial,0) AS comm_total, IFNULL(e.commercial,0) AS comm_equity,
+     IFNULL(t.other,0)  AS oth_total, IFNULL(e.other,0) AS oth_equity,
+
+     /* ---- roll‑ups ---- */
+     /* sustainable  = transit + walk + bike */
+     IFNULL(t.transit,0)+IFNULL(t.walking,0)+IFNULL(t.biking,0) AS sust_total ,
+     IFNULL(e.transit,0)+IFNULL(e.walking,0)+IFNULL(e.biking,0) AS sust_equity,
+
+     /* active = walk + bike */
+     IFNULL(t.walking,0)+IFNULL(t.biking,0) AS active_total ,
+     IFNULL(e.walking,0)+IFNULL(e.biking,0) AS active_equity,
+
+     /* all = every mode above */
+     (IFNULL(t.auto,0)+IFNULL(t.tnc,0)+IFNULL(t.carpool,0)+IFNULL(t.commercial,0)+
+      IFNULL(t.other,0)+IFNULL(t.transit,0)+IFNULL(t.walking,0)+IFNULL(t.biking,0)) AS all_total,
+     (IFNULL(e.auto,0)+IFNULL(e.tnc,0)+IFNULL(e.carpool,0)+IFNULL(e.commercial,0)+
+      IFNULL(e.other,0)+IFNULL(e.transit,0)+IFNULL(e.walking,0)+IFNULL(e.biking,0)) AS all_equity,
+
+  FROM   total_links  AS t
+  FULL OUTER JOIN equity_links AS e USING (stableEdgeId)
 ),
+
+/* ───────────────────────── 6.  Attach network attributes ──────────────────────────── */
+
 
 loaded_network AS (
-SELECT
-n.stableEdgeID,
-n.streetName,
-n.speed,
-n.distance,
-n.highway,
-n.flags,
-n.lanes,
-n.geometry,
-ll.auto,
-ll.carpool,
-ll.commercial,
-ll.tnc,
-ll.biking,
-ll.walking,
-ll.transit,
-ll.other
-FROM network_links as n
-LEFT JOIN loaded_links as ll ON n.stableEdgeId = ll.stableEdgeId
+  SELECT n.* EXCEPT(stableEdgeId),
+         j.*
+  FROM   network_links n
+  LEFT  JOIN joined_links j USING (stableEdgeId)
 )
 
-SELECT stableEdgeID, streetname, speed, distance, highway, flags, lanes, auto, carpool, commercial, tnc, biking, walking, transit, other, geometry,
-FROM loaded_network", .con = DBI::ANSI()) |>
-      suppressMessages()|>
-  suppressWarnings()
+/* ───────────────────────── 7.  Final result ───────────────────────────────────────── */
+SELECT
+  stableEdgeId,
+  streetName,
+  speed,
+  distance,
+  highway,
+  flags,
+  lanes,
 
-    # Query BigQuery
-    tb <- bq_project_query("replica-customer", sql_query) |>
-      suppressMessages() |>
-      suppressWarnings()
+  /* mode‑specific totals + equity */
+  auto_total,      auto_equity,
+  tnc_total,       tnc_equity,
+  bike_total,      bike_equity,
+  walk_total,      walk_equity,
+  transit_total,   transit_equity,
+  carpool_total,   carpool_equity,
+  comm_total,      comm_equity,
+  oth_total,       oth_equity,
 
-    df_network <- bq_table_download(tb) |>
-      suppressMessages()|>
-      suppressWarnings()
+  /* roll‑ups */
+  sust_total,      sust_equity,
+  active_total,    active_equity,
+  all_total,       all_equity,
 
-    # Convert to spatial
-    sf_network <- st_as_sf(df_network, wkt = 'geometry', crs = 4326) |>
-      st_filter(study_area_sf) |>
-      st_make_valid() |>
-      suppressMessages()|>
-      suppressWarnings()
-    
-    if(nrow(sf_network) > 60000) {
-      stop("Network too large. Please select a smaller study area.")
-    }
+  /* calculations */
+  SAFE_DIVIDE(all_equity , all_total ) * 100  AS total_equity_pct,
+  SAFE_DIVIDE(sust_equity, sust_total) * 100  AS sust_equity_pct,
+  SAFE_DIVIDE(active_equity, active_total) * 100  AS active_equity_pct,
 
-    # Return as ArcGIS output
-    arc.write(output_path, sf_network, overwrite = TRUE, validate = TRUE) |>
-      suppressMessages()|>
-      suppressWarnings()
+  geometry
+FROM loaded_network;", .con = DBI::ANSI()) |>
+    suppressMessages() |>
+    suppressWarnings()
+
+  # Query BigQuery
+  tb <- bq_project_query("replica-customer", sql_query) |>
+    suppressMessages() |>
+    suppressWarnings()
+
+  print("Successfully queried BigQuery. Writing to output...")
+
+  df_network <- bq_table_download(tb) |>
+    suppressMessages() |>
+    suppressWarnings()
+
+  # Convert to spatial
+  df_network <- st_as_sf(df_network, wkt = "geometry", crs = 4326) |>
+    st_filter(study_area_sf) |>
+    st_make_valid() |>
+    mutate_if(is.numeric, ~ replace(., is.na(.), 0)) |>
+    suppressMessages() |>
+    suppressWarnings()
+
+  if (nrow(df_network) > 60000) {
+    temp_file <- paste0(tempdir(), "/network_large.shp")
+    print(paste0("Network very large. ", nrow(df_network), " rows in data. May crash tool. Writing to shapefile in temp directory as backup: ", temp_file))
+
+    st_write(df_network, temp_file, delete_dsn = TRUE, quiet = TRUE)
+  }
+
+  # Return as ArcGIS output
+  arc.write(output_path, df_network) |>
+    suppressMessages() |>
+    suppressWarnings()
+
+  print("Successfully wrote to output.")
 }
