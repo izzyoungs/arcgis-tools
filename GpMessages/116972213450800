@@ -1,6 +1,0 @@
-﻿<?xml version="1.0" encoding="utf-8"?><messages><msg code="0" type="2">Start Time: Friday, February 28, 2025 5:29:26 PM</msg><msg code="0" type="0">[1] "Extracting input parameters"</msg><msg code="0" type="0">[1] "Authenticating with BigQuery"</msg><msg code="0" type="0">[1] "Checking and loading study area"</msg><msg code="0" type="0">[1] "Study area path is empty, using state name and county to determine study area"</msg><msg code="0" type="0">[1] "Determining location based on state and county"</msg><msg code="0" type="0">[1] "Constructing SQL query for cal_nev, 2024 Q2 thursday..."</msg><msg code="0" type="0">[1] "Executing SQL query"</msg><msg code="0" type="0">
-Parsing [===============--------------------------------------------] ETA:  0s
-Parsing [============================================---------------] ETA:  0s
-Parsing [===========================================================] ETA:  0s
-                                                                              
-[1] "Exporting results: 104582 rows"</msg><msg code="0" type="0">[1] "Process completed successfully"</msg><msg code="0" type="3">Succeeded at Friday, February 28, 2025 5:30:17 PM (Elapsed Time: 50.94 seconds)</msg></messages>
