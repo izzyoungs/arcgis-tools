@@ -186,7 +186,6 @@ tool_exec <- function(in_params, out_params) {
     suppressMessages() |>
     suppressWarnings()
 
-
   # Get SQL arguments for query ---------------------------------------------
   # Construct the SQL query
   print(paste0("Constructing SQL query for ", megaregion, ", ", year, " ", quarter, " ", day, "..."))
@@ -205,9 +204,7 @@ tool_exec <- function(in_params, out_params) {
     .con = DBI::ANSI()
   )
 
-  print(sql)
-  stop()
-
+  print("Executing SQL query...")
 
   # Execute SQL Query -------------------------------------------------------
 
@@ -215,7 +212,7 @@ tool_exec <- function(in_params, out_params) {
     suppressMessages() |>
     suppressWarnings()
 
-  tb_return <- bq_table_download(tb) |>
+  tb_return <- bq_table_download(tb, page_size = 10000) |>
     suppressMessages() |>
     suppressWarnings()
 
@@ -279,7 +276,9 @@ tool_exec <- function(in_params, out_params) {
   print("Writing output to file")
 
   # Export results
-  suppressMessages(arc.write(output_path, sf_final))
+  arc.write(output_path, sf_final, overwrite = TRUE, validate = TRUE) |>
+    suppressMessages() |>
+    suppressWarnings()
 
   print("Process completed successfully")
 }
