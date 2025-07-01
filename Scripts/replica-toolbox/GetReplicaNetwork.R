@@ -203,7 +203,7 @@ base_data AS (
   JOIN `replica-customer.{region}.{region}_{year}_{quarter}_population` pop
     ON t.person_id = pop.person_id
   CROSS JOIN equity_areas ea
-  WHERE t.travel_purpose != 'HOME'
+  WHERE t.travel_purpose != 'HOME' AND t.mode != 'commercial' AND pop.school_grade_attending = 'not_attending_school'
   GROUP BY stableEdgeId, v_mode, is_equity_area
 ),
 
