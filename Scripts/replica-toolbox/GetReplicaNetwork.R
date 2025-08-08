@@ -204,6 +204,7 @@ base_data AS (
     ON t.person_id = pop.person_id
   CROSS JOIN equity_areas ea
   WHERE t.travel_purpose != 'HOME' AND t.mode != 'commercial' AND pop.school_grade_attending = 'not_attending_school'
+  AND (ST_WITHIN(ST_GEOGPOINT(t.start_lng, t.start_lat), ea.geom) OR ST_WITHIN(ST_GEOGPOINT(t.end_lng, t.end_lat), ea.geom))
   GROUP BY stableEdgeId, v_mode, is_equity_area
 ),
 
@@ -245,7 +246,6 @@ joined_links AS (
      IFNULL(t.walking,0)  AS walk_total, IFNULL(e.walking,0) AS walk_equity,
      IFNULL(t.transit,0)  AS transit_total, IFNULL(e.transit,0) AS transit_equity,
      IFNULL(t.carpool,0)  AS carpool_total, IFNULL(e.carpool,0) AS carpool_equity,
-     IFNULL(t.commercial,0) AS comm_total, IFNULL(e.commercial,0) AS comm_equity,
      IFNULL(t.other,0)  AS oth_total, IFNULL(e.other,0) AS oth_equity,
 
      /* ---- roll‑ups ---- */
@@ -258,9 +258,9 @@ joined_links AS (
      IFNULL(e.walking,0)+IFNULL(e.biking,0) AS active_equity,
 
      /* all = every mode above */
-     (IFNULL(t.auto,0)+IFNULL(t.tnc,0)+IFNULL(t.carpool,0)+IFNULL(t.commercial,0)+
+     (IFNULL(t.auto,0)+IFNULL(t.tnc,0)+IFNULL(t.carpool,0)+
       IFNULL(t.other,0)+IFNULL(t.transit,0)+IFNULL(t.walking,0)+IFNULL(t.biking,0)) AS all_total,
-     (IFNULL(e.auto,0)+IFNULL(e.tnc,0)+IFNULL(e.carpool,0)+IFNULL(e.commercial,0)+
+     (IFNULL(e.auto,0)+IFNULL(e.tnc,0)+IFNULL(e.carpool,0)+
       IFNULL(e.other,0)+IFNULL(e.transit,0)+IFNULL(e.walking,0)+IFNULL(e.biking,0)) AS all_equity,
 
   FROM   total_links  AS t
@@ -294,7 +294,6 @@ SELECT
   walk_total,      walk_equity,
   transit_total,   transit_equity,
   carpool_total,   carpool_equity,
-  comm_total,      comm_equity,
   oth_total,       oth_equity,
 
   /* roll‑ups */
@@ -303,9 +302,9 @@ SELECT
   all_total,       all_equity,
 
   /* calculations */
-  SAFE_DIVIDE(all_equity , all_total ) * 100  AS total_equity_pct,
-  SAFE_DIVIDE(sust_equity, sust_total) * 100  AS sust_equity_pct,
-  SAFE_DIVIDE(active_equity, active_total) * 100  AS active_equity_pct,
+  SAFE_DIVIDE(all_equity , all_total) * 100  AS total_equity_pct, /* percent of all trips that are equity */
+  SAFE_DIVIDE(sust_equity, sust_total) * 100  AS sust_equity_pct, /* percent of all sustainable trips that are equity */
+  SAFE_DIVIDE(active_equity, active_total) * 100  AS active_equity_pct, /* percent of all active trips that are equity */
 
   geometry
 FROM loaded_network;", .con = DBI::ANSI()) |>
