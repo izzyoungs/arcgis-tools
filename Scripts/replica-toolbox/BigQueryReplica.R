@@ -3,6 +3,7 @@ tool_exec <- function(in_params, out_params) {
   arc.progress_label("Loading libraries")
   suppressMessages({
     library(sf)
+    sf_use_s2(FALSE)
     library(tidyverse)
     library(bigrquery)
     library(glue)
@@ -14,14 +15,14 @@ tool_exec <- function(in_params, out_params) {
 
   # Extract input parameters
   print("Extracting input parameters")
-  destinations <- in_params[[1]] # Path to the destinations boundary
-  home_locations <- in_params[[2]] # Path to the home locations boundary
-  home_locations_tag <- in_params[[3]] # Path to home locations tag polygon
-  home_locations_tag_field <- in_params[[4]] # Field for home locations tag
-  email <- in_params[[5]] # Email for authentication
-  year <- in_params[[6]] # Year
-  quarter <- in_params[[7]] # Quarter
-  day <- in_params[[8]] # Day
+  study_area <- in_params[[1]] # Path to the study area boundary
+  trip_geometry <- in_params[[2]] # Whether the trips start/end/intersect the study area
+  email <- in_params[[3]] # Email for authentication
+  year <- in_params[[4]] # Year
+  quarter <- in_params[[5]] # Quarter
+  day <- in_params[[6]] # Day
+
+  # Set the output path csv
   output_path <- out_params[[1]] # Output path
 
   # Authenticate with BigQuery
@@ -31,115 +32,45 @@ tool_exec <- function(in_params, out_params) {
 
   # Load Boundaries ---------------------------------------------------------
 
-  # If destinations path is not empty, load the destinations boundary
-  if (length(destinations) > 0) {
-    print("Loading boundary for destinations")
-    destinations_sf <- arc.open(destinations) |>
-      arc.select() |>
-      arc.data2sf() |>
-      st_transform(4269) |>
-      st_make_valid() |>
-      summarize() |>
-      suppressMessages()
+  print("Loading study area boundaries")
+  study_area_sf <- arc.open(study_area) |>
+    arc.select() |>
+    arc.data2sf() |>
+    st_transform(4326) |>
+    # st_union() |>
+    st_make_valid() |>
+    suppressMessages()
 
-    destinations_wkt <- st_as_text(destinations_sf$geom) |> glue_sql()
+  study_area_wkt <- st_as_text(study_area_sf$geom) |> glue_sql()
 
-    # if destinations_wkt is over 1000 characters, get the bounding box instead
-    if (nchar(destinations_wkt) > 1000) {
-      bbox_destinations <- st_bbox(destinations_sf)
+  # if WKT is over 1000 characters, get the bounding box instead
+  if (nchar(study_area_wkt) > 1000) {
+    bbox_study_area <- st_bbox(study_area_sf)
 
-      bbox_destinations_coords <- matrix(
-        c(
-          bbox_destinations["xmin"], bbox_destinations["ymin"], # Bottom-left
-          bbox_destinations["xmax"], bbox_destinations["ymin"], # Bottom-right
-          bbox_destinations["xmax"], bbox_destinations["ymax"], # Top-right
-          bbox_destinations["xmin"], bbox_destinations["ymax"], # Top-left
-          bbox_destinations["xmin"], bbox_destinations["ymin"] # Close the polygon
-        ),
-        ncol = 2, byrow = TRUE
-      )
-
-      bbox_destinations_polygon <- st_polygon(list(bbox_destinations_coords))
-      destinations_wkt <- st_as_text(bbox_destinations_polygon) |>
-        glue_sql()
-    }
-
-    where_destinations <- glue_sql("WHERE ST_WITHIN(ST_GEOGPOINT(end_lng, end_lat), ST_GEOGFROMTEXT('{destinations_wkt}'))",
-      .con = DBI::ANSI()
+    bbox_study_area_coords <- matrix(
+      c(
+        bbox_study_area["xmin"], bbox_study_area["ymin"], # Bottom-left
+        bbox_study_area["xmax"], bbox_study_area["ymin"], # Bottom-right
+        bbox_study_area["xmax"], bbox_study_area["ymax"], # Top-right
+        bbox_study_area["xmin"], bbox_study_area["ymax"], # Top-left
+        bbox_study_area["xmin"], bbox_study_area["ymin"] # Close the polygon
+      ),
+      ncol = 2, byrow = TRUE
     )
 
-    # If the home locations path is not empty, load the home locations boundary
-  } else {
-    print("No destinations provided. Using home locations to determine trips.")
-    where_destinations <- glue_sql("WHERE", .con = DBI::ANSI())
+    bbox_study_area_polygon <- st_polygon(list(bbox_study_area_coords)) |>
+      st_make_valid()
+    study_area_wkt <- st_as_text(bbox_study_area_polygon) |>
+      glue_sql()
   }
 
-  if (length(destinations) > 0 & length(home_locations) > 0) {
-    both_and <- glue_sql("AND", .con = DBI::ANSI())
-  } else {
-    both_and <- glue_sql("", .con = DBI::ANSI())
-  }
-
-  if (length(home_locations) > 0) {
-    print("Loading boundary for home locations")
-
-    home_locations_sf <- arc.open(home_locations) |>
-      arc.select() |>
-      arc.data2sf() |>
-      st_transform(4269) |>
-      st_make_valid() |>
-      summarize() |>
-      suppressMessages()
-
-    home_locations_wkt <- st_as_text(home_locations_sf$geom) |> glue_sql()
-
-    # if home_locations_wkt is over 1000 characters, get the bounding box instead
-    if (nchar(home_locations_wkt) > 1000) {
-      bbox_home_locations <- st_bbox(home_locations_sf)
-
-      bbox_home_locations_coords <- matrix(
-        c(
-          bbox_home_locations["xmin"], bbox_home_locations["ymin"], # Bottom-left
-          bbox_home_locations["xmax"], bbox_home_locations["ymin"], # Bottom-right
-          bbox_home_locations["xmax"], bbox_home_locations["ymax"], # Top-right
-          bbox_home_locations["xmin"], bbox_home_locations["ymax"], # Top-left
-          bbox_home_locations["xmin"], bbox_home_locations["ymin"] # Close the polygon
-        ),
-        ncol = 2, byrow = TRUE
-      )
-
-      bbox_home_locations_polygon <- st_polygon(list(bbox_home_locations_coords))
-      home_locations_wkt <- st_as_text(bbox_home_locations_polygon) |>
-        glue_sql()
-    }
-
-    where_home_locations <- glue_sql("ST_WITHIN(ST_GEOGPOINT(lng, lat), ST_GEOGFROMTEXT('{home_locations_wkt}'))",
-      .con = DBI::ANSI()
-    )
-  } else if (length(destinations) == 0 & length(home_locations) == 0) {
-    print("No destinations or home location boundaries provided. Please provide a way to return trip table.")
-    stop()
-  } else {
-    print("No home locations provided. Using destinations only to determine trips.")
-    where_home_locations <- glue_sql("", .con = DBI::ANSI())
-  }
-
-
-  # Get Home Location Tags --------------------------------------------------
-
-  if (length(home_locations_tag) > 0 & length(home_locations_tag_field) > 0) {
-    home_locations_tag_sf <- arc.open(home_locations_tag) |>
-      arc.select() |>
-      arc.data2sf() |>
-      st_transform(4269) |>
-      st_make_valid() |>
-      select(any_of(home_locations_tag_field)) |>
-      suppressMessages()
-
-    print(paste0("Will assign home locations the following tag: ", home_locations_tag_field))
-  } else {
-    print("No home location tags provided. Will not append a home location flag to table.")
-  }
+  where_trip_geometry <- case_when(
+    trip_geometry == "Destinations only" ~ "WHERE ST_INTERSECTS(ST_GEOGPOINT(end_lng, end_lat), study_area.geom)",
+    trip_geometry == "Origins only" ~ "WHERE ST_INTERSECTS(ST_GEOGPOINT(start_lng, start_lat), study_area.geom)",
+    trip_geometry == "Destinations or origins" ~ "WHERE ST_INTERSECTS(ST_GEOGPOINT(end_lng, end_lat), study_area.geom) OR ST_INTERSECTS(ST_GEOGPOINT(start_lng, start_lat), study_area.geom)",
+    trip_geometry == "Destinations and origins" ~ "WHERE ST_INTERSECTS(ST_GEOGPOINT(end_lng, end_lat), study_area.geom) AND ST_INTERSECTS(ST_GEOGPOINT(start_lng, start_lat), study_area.geom)",
+    trip_geometry == "Intersects" ~ "WHERE ST_INTERSECTS(geometry, study_area.geom))"
+  ) |> glue_sql()
 
 
   # Get Megaregion ----------------------------------------------------------
@@ -171,14 +102,8 @@ tool_exec <- function(in_params, out_params) {
     )
   )
 
-  if (length(destinations) == 0) {
-    sf_megaregions <= home_locations_sf
-  } else {
-    sf_megaregions <- destinations_sf
-  }
-
-  megaregion <- left_join(tigris::states(cb = TRUE, year = 2023, progress_bar = FALSE), megaregions) |>
-    st_intersection(sf_megaregions) |>
+  megaregion <- left_join(tigris::states(cb = TRUE, year = 2023, progress_bar = FALSE) |> st_transform(4326), megaregions) |>
+    st_intersection(study_area_sf) |>
     st_drop_geometry() |>
     slice(1L) |>
     pull(Megaregion) |>
@@ -195,16 +120,28 @@ tool_exec <- function(in_params, out_params) {
   day_sql <- glue_sql(day)
 
   sql <- glue_sql("
-    SELECT pop.person_id, activity_id, distance_miles, mode, travel_purpose, pop.commute_mode, pop.household_size, pop.vehicles, pop.age_group, pop.sex, pop.race, pop.ethnicity, pop.employment, pop.education, start_lat, start_lng, end_lat, end_lng, pop.lat as home_lat, pop.lng as home_lng
-    FROM `replica-customer.{megaregion}.{megaregion}_{year_sql}_{quarter_sql}_{day_sql}_trip` as trip
-    LEFT JOIN `replica-customer.{megaregion}.{megaregion}_{year_sql}_{quarter_sql}_population` as pop
+    WITH study_area AS (SELECT ST_GEOGFROMTEXT('{study_area_wkt}') AS geom
+),
+base_data AS (
+  SELECT
+    pop.person_id, activity_id, distance_miles, origin_bgrp_20, destination_bgrp_20,
+    mode, travel_purpose, pop.commute_mode, pop.household_size, pop.vehicles,
+    pop.age_group, pop.sex, pop.race, pop.ethnicity, pop.employment, pop.education,
+    start_lat, start_lng, end_lat, end_lng,
+    pop.lat AS home_lat, pop.lng AS home_lng,
+    geometry
+  FROM `replica-customer.cal_nev.cal_nev_2024_Q4_thursday_trip` AS trip
+  LEFT JOIN `replica-customer.cal_nev.cal_nev_2024_Q4_population` AS pop
     ON trip.person_id = pop.person_id
-    {where_destinations}
-    {both_and} {where_home_locations}",
+  CROSS JOIN study_area
+    {where_trip_geometry})
+SELECT *
+FROM base_data;",
     .con = DBI::ANSI()
   )
 
   print("Executing SQL query...")
+  print(sql)
 
   # Execute SQL Query -------------------------------------------------------
 
@@ -212,7 +149,7 @@ tool_exec <- function(in_params, out_params) {
     suppressMessages() |>
     suppressWarnings()
 
-  tb_return <- bq_table_download(tb, page_size = 10000) |>
+  tb_return <- bq_table_download(tb, page_size = 5000) |>
     suppressMessages() |>
     suppressWarnings()
 
@@ -221,10 +158,20 @@ tool_exec <- function(in_params, out_params) {
     stop()
   }
 
+  print("Successfully retrieved data from BigQuery. Post-processing data...")
   sf_final <- tb_return |>
     mutate(
       n = 1,
       n2 = 1,
+      n3 = 1,
+      mileage = case_when(
+        distance_miles <= 1 ~ "dist_less_1",
+        distance_miles > 1 & distance_miles <= 3 ~ "dist_1_3",
+        distance_miles > 3 & distance_miles <= 6 ~ "dist_3_6",
+        distance_miles > 6 ~ "dist_more_6"
+      ),
+      primary_mode = mode,
+      trip_purpose = travel_purpose,
       mode = paste0("mode_", mode),
       travel_purpose = paste0("purpose_", travel_purpose)
     ) |>
@@ -236,41 +183,67 @@ tool_exec <- function(in_params, out_params) {
       names_from = mode, values_from = n2, values_fill = list(value = 0),
       values_fn = ~ mean(.x, na.rm = TRUE)
     ) |>
-    mutate_if(is.numeric, ~ ifelse(is.na(.), 0, .))
+    pivot_wider(
+      names_from = mileage, values_from = n3, values_fill = list(value = 0),
+      values_fn = ~ mean(.x, na.rm = TRUE)
+    ) |>
+    mutate_if(is.numeric, ~ ifelse(is.na(.), 0, .)) |>
+    suppressMessages() |>
+    suppressWarnings()
 
-  print("Successfully retrieved data from BigQuery")
-
-
-  if (length(destinations) > 0) {
+  if (trip_geometry == "Destinations only") {
     sf_final <- sf_final |>
       st_as_sf(coords = c("end_lng", "end_lat"), crs = 4326, remove = FALSE) |>
-      st_intersection(destinations_sf |> st_transform(crs = 4326)) |>
+      st_filter(study_area_sf |> st_transform(crs = 4326), .predicate = st_intersects) |>
       st_drop_geometry() |>
       suppressMessages() |>
       suppressWarnings()
-
-    print("Removed trips outside of destination boundary")
-  }
-
-  if (length(home_locations) > 0) {
+  } else if (trip_geometry == "Origins only") {
     sf_final <- sf_final |>
-      st_as_sf(coords = c("home_lng", "home_lat"), crs = 4326, remove = FALSE) |>
-      st_intersection(home_locations_sf |> st_transform(crs = 4326)) |>
+      st_as_sf(coords = c("start_lng", "start_lat"), crs = 4326, remove = FALSE) |>
+      st_filter(study_area_sf |> st_transform(crs = 4326), .predicate = st_intersects) |>
       st_drop_geometry() |>
       suppressMessages() |>
       suppressWarnings()
-
-    print("Removed trips outside of home location boundary")
-  }
-  if (length(home_locations_tag) > 0) {
+  } else if (trip_geometry == "Destinations and origins") {
     sf_final <- sf_final |>
-      st_as_sf(coords = c("home_lng", "home_lat"), crs = 4326, remove = FALSE) |>
-      st_join(home_locations_tag_sf |> st_transform(crs = 4326), join = st_intersects, left = TRUE) |>
+      st_as_sf(coords = c("end_lng", "end_lat"), crs = 4326, remove = FALSE) |>
+      st_filter(study_area_sf |> st_transform(crs = 4326), .predicate = st_intersects) |>
+      st_drop_geometry() |>
+      st_as_sf(coords = c("start_lng", "start_lat"), crs = 4326, remove = FALSE) |>
+      st_filter(study_area_sf |> st_transform(crs = 4326), .predicate = st_intersects) |>
       st_drop_geometry() |>
       suppressMessages() |>
       suppressWarnings()
+  } else if (trip_geometry == "Destinations or origins") {
+    pts_end <- sf_final |>
+      st_as_sf(coords = c("end_lng", "end_lat"), crs = 4326, remove = FALSE) |>
+      st_intersects(study_area_sf, sparse = FALSE) |>
+      suppressMessages() |>
+      suppressWarnings()
 
-    print("Added home location tag to trips")
+    pts_start <- sf_final |>
+      st_as_sf(coords = c("start_lng", "start_lat"), crs = 4326, remove = FALSE) |>
+      st_intersects(study_area_sf, sparse = FALSE) |>
+      suppressMessages() |>
+      suppressWarnings()
+
+    sf_final <- sf_final |>
+      mutate(
+        ends = pts_end[, 1],
+        starts = pts_start[, 1]
+      ) |>
+      filter(ends == TRUE | starts == TRUE) |>
+      st_drop_geometry() |>
+      suppressMessages() |>
+      suppressWarnings()
+  } else if (trip_geometry == "Intersects") {
+    sf_final <- sf_final |>
+      st_as_sf(wkt = "geometry", crs = 4326, remove = FALSE) |>
+      st_filter(study_area_sf |> st_transform(crs = 4326), .predicate = st_intersects) |>
+      st_drop_geometry() |>
+      suppressMessages() |>
+      suppressWarnings()
   }
 
   print("Writing output to file")
