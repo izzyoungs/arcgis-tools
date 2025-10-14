@@ -172,7 +172,7 @@ network_links AS (
          n.flags,
          n.lanes,
          n.geometry
-  FROM  `replica-customer.{region}.{region}_2024_{quarter}_network_segments` n
+  FROM  `replica-customer.{region}.{region}_{year}_{quarter}_network_segments` n
   JOIN  aoe a ON ST_INTERSECTS(a.geom, n.geometry)
 ),
 
