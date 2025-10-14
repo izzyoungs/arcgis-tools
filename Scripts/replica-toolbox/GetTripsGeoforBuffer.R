@@ -119,14 +119,43 @@ tool_exec <- function(in_params, out_params) {
   print(paste0("Running SQL query for ", region, " for ", year, " ", quarter, " ", day, "..."))
 
   # SQL Query
-  sql_query <- glue_sql("WITH study_area AS (SELECT ST_GEOGFROMTEXT('{study_area_wkt}') AS geom),
+  sql_query <- glue_sql("
+WITH study_area AS (
+  SELECT ST_GEOGFROMTEXT('{study_area_wkt}') AS geom
+),
 
-  base_data AS (SELECT activity_id, mode, travel_purpose, duration_minutes, distance_miles, geometry
-                        FROM `replica-customer.{region}.{region}_{year}_{quarter}_{day}_trip`
-                        CROSS JOIN study_area
-                        WHERE ST_INTERSECTS(geometry, geom) AND distance_miles < 100)
-  SELECT *
-  FROM base_data;", .con = DBI::ANSI()) |>
+network_links AS (
+  SELECT n.stableEdgeId,
+         n.geometry AS link_geom
+  FROM  `replica-customer.{region}.{region}_{year}_{quarter}_network_segments` n
+),
+
+expanded AS (
+  SELECT
+    t.activity_id,
+    t.mode,
+    t.travel_purpose,
+    t.distance_miles,
+    t.duration_minutes,
+    t.network_link_ids,
+    pos,
+    n.link_geom
+  FROM `replica-customer.{region}.{region}_{year}_{quarter}_{day}_trip` AS t
+  CROSS JOIN UNNEST(t.network_link_ids) AS stableEdgeId WITH OFFSET pos
+  JOIN network_links AS n ON n.stableEdgeId = stableEdgeId
+  WHERE ST_INTERSECTS(n.link_geom, (SELECT geom FROM study_area))
+)
+
+SELECT
+  activity_id,
+  ANY_VALUE(mode)     AS primary_mode,
+  ANY_VALUE(travel_purpose)     AS trip_purpose,
+  ANY_VALUE(distance_miles)    AS distance_miles,
+  ANY_VALUE(duration_minutes)  AS duration_minutes,
+  ST_MAKELINE(ARRAY_AGG(link_geom ORDER BY pos)) AS trip_geometry
+FROM expanded
+GROUP BY activity_id;
+                        ", .con = DBI::ANSI()) |>
     suppressMessages() |>
     suppressWarnings()
 
@@ -138,12 +167,8 @@ tool_exec <- function(in_params, out_params) {
   print("Successfully queried BigQuery. Writing to output...")
 
   df_network <- bq_table_download(tb, page_size = 5000) |>
-    suppressMessages() |>
-    suppressWarnings()
-
-  # Convert to spatial
-  df_network <- st_as_sf(df_network, wkt = "geometry", crs = 4326) |>
-  st_collection_extract("LINESTRING") |>
+    mutate(trip_geometry = st_as_sfc(trip_geometry, crs = 4326)) |>
+    st_as_sf(crs = 4326) |>
     st_make_valid() |>
     st_filter(study_area_sf |> st_transform(crs = 4326), .predicate = st_intersects) |>
     mutate_if(is.numeric, ~ replace(., is.na(.), 0)) |>
