@@ -37,7 +37,6 @@ tool_exec <- function(in_params, out_params) {
     arc.select() |>
     arc.data2sf() |>
     st_transform(4326) |>
-    # st_union() |>
     st_make_valid() |>
     suppressMessages()
 
@@ -130,8 +129,8 @@ base_data AS (
     start_lat, start_lng, end_lat, end_lng,
     pop.lat AS home_lat, pop.lng AS home_lng,
     geometry
-  FROM `replica-customer.cal_nev.cal_nev_2024_Q4_thursday_trip` AS trip
-  LEFT JOIN `replica-customer.cal_nev.cal_nev_2024_Q4_population` AS pop
+  FROM `replica-customer.{megaregion}.{megaregion}_{year}_{quarter}_{day}_trip` AS trip
+  LEFT JOIN `replica-customer.{megaregion}.{megaregion}_{year}_{quarter}_population` AS pop
     ON trip.person_id = pop.person_id
   CROSS JOIN study_area
     {where_trip_geometry})
