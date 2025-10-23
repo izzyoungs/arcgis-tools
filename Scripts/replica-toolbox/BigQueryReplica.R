@@ -68,7 +68,10 @@ tool_exec <- function(in_params, out_params) {
     trip_geometry == "Origins only" ~ "WHERE ST_INTERSECTS(ST_GEOGPOINT(start_lng, start_lat), study_area.geom)",
     trip_geometry == "Destinations or origins" ~ "WHERE ST_INTERSECTS(ST_GEOGPOINT(end_lng, end_lat), study_area.geom) OR ST_INTERSECTS(ST_GEOGPOINT(start_lng, start_lat), study_area.geom)",
     trip_geometry == "Destinations and origins" ~ "WHERE ST_INTERSECTS(ST_GEOGPOINT(end_lng, end_lat), study_area.geom) AND ST_INTERSECTS(ST_GEOGPOINT(start_lng, start_lat), study_area.geom)",
-    trip_geometry == "Intersects" ~ "WHERE ST_INTERSECTS(geometry, study_area.geom))"
+    trip_geometry == "Intersects" ~ "CROSS JOIN UNNEST(trip.network_link_ids) AS stableEdgeId
+  JOIN network_links AS n
+    ON n.stableEdgeId = stableEdgeId
+    WHERE ST_INTERSECTS(link_geom, study_area.geom)"
   ) |> glue_sql()
 
 
@@ -121,6 +124,15 @@ tool_exec <- function(in_params, out_params) {
   sql <- glue_sql("
     WITH study_area AS (SELECT ST_GEOGFROMTEXT('{study_area_wkt}') AS geom
 ),
+
+network_links AS (
+  SELECT
+    n.stableEdgeId,
+    n.geometry AS link_geom
+  FROM `replica-customer.{megaregion}.{megaregion}_{year_sql}_{quarter_sql}_network_segments` n
+),
+
+
 base_data AS (
   SELECT
     pop.person_id, activity_id, distance_miles, origin_bgrp_20, destination_bgrp_20,
@@ -128,12 +140,12 @@ base_data AS (
     pop.age_group, pop.sex, pop.race, pop.ethnicity, pop.employment, pop.education,
     start_lat, start_lng, end_lat, end_lng,
     pop.lat AS home_lat, pop.lng AS home_lng,
-    geometry
-  FROM `replica-customer.{megaregion}.{megaregion}_{year}_{quarter}_{day}_trip` AS trip
-  LEFT JOIN `replica-customer.{megaregion}.{megaregion}_{year}_{quarter}_population` AS pop
+  FROM `replica-customer.{megaregion}.{megaregion}_{year_sql}_{quarter_sql}_{day_sql}_trip` AS trip
+  LEFT JOIN `replica-customer.{megaregion}.{megaregion}_{year_sql}_{quarter_sql}_population` AS pop
     ON trip.person_id = pop.person_id
   CROSS JOIN study_area
     {where_trip_geometry})
+
 SELECT *
 FROM base_data;",
     .con = DBI::ANSI()

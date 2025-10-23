@@ -5,8 +5,7 @@
 #' Copyright: © 2024 Izzy Youngs
 #'
 #' Inputs:
-#'  - study_area: A feature class or shapefile containing the study area.
-#'  - equity_area: A feature class or shapefile containing the equity area.
+#'  - study_area: A feature class containing the study area.
 #'  - year: The year for which to retrieve network volumes.
 #'  - quarter: The quarter for which to retrieve network volumes.
 #'  - day: The day for which to retrieve network volumes.
@@ -125,9 +124,22 @@ WITH study_area AS (
 ),
 
 network_links AS (
-  SELECT n.stableEdgeId,
-         n.geometry AS link_geom
+  SELECT
+    n.stableEdgeId,
+    n.geometry AS link_geom
   FROM  `replica-customer.{region}.{region}_{year}_{quarter}_network_segments` n
+),
+
+filtered_trips AS (
+  SELECT
+    t.activity_id,
+    t.mode,
+    t.travel_purpose,
+    t.distance_miles,
+    t.duration_minutes,
+    t.network_link_ids
+  FROM `replica-customer.{region}.{region}_{year}_{quarter}_{day}_trip` AS t
+  WHERE ST_INTERSECTS(t.geometry, (SELECT geom FROM study_area))
 ),
 
 expanded AS (
@@ -137,22 +149,21 @@ expanded AS (
     t.travel_purpose,
     t.distance_miles,
     t.duration_minutes,
-    t.network_link_ids,
-    pos,
-    n.link_geom
-  FROM `replica-customer.{region}.{region}_{year}_{quarter}_{day}_trip` AS t
+    n.link_geom,
+    pos
+  FROM filtered_trips AS t
   CROSS JOIN UNNEST(t.network_link_ids) AS stableEdgeId WITH OFFSET pos
-  JOIN network_links AS n ON n.stableEdgeId = stableEdgeId
-  WHERE ST_INTERSECTS(n.link_geom, (SELECT geom FROM study_area))
+  JOIN network_links AS n
+    ON n.stableEdgeId = stableEdgeId
 )
 
 SELECT
   activity_id,
-  ANY_VALUE(mode)     AS primary_mode,
-  ANY_VALUE(travel_purpose)     AS trip_purpose,
-  ANY_VALUE(distance_miles)    AS distance_miles,
-  ANY_VALUE(duration_minutes)  AS duration_minutes,
-  ST_MAKELINE(ARRAY_AGG(link_geom ORDER BY pos)) AS trip_geometry
+  ANY_VALUE(mode) AS primary_mode,
+  ANY_VALUE(travel_purpose) AS trip_purpose,
+  ANY_VALUE(distance_miles) AS distance_miles,
+  ANY_VALUE(duration_minutes) AS duration_minutes,
+  ST_ASTEXT(ST_MAKELINE(ARRAY_AGG(link_geom ORDER BY pos))) AS trip_geometry
 FROM expanded
 GROUP BY activity_id;
                         ", .con = DBI::ANSI()) |>
