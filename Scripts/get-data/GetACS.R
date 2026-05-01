@@ -14,18 +14,20 @@ tool_exec <- function(in_params, out_params) {
 
   study_area <- arc.open(in_params[[1]]) |> arc.select()
   study_area_sf <- arc.data2sf(study_area) |> st_transform(4326)
-  concepts_params <- in_params[[2]]
+  acs_year <- as.numeric(in_params[[2]])
+  concepts_params <- in_params[[3]]
   selected_concepts <- unlist(concepts_params)
 
   # replace shortened names with full concept names
   selected_concepts <- selected_concepts |>
     str_replace_all("Limited English Households", "Household Language by Household Limited English Speaking Status") |>
     str_replace_all("Vehicle Availablility", "Tenure by Vehicles Available") |>
-    str_replace_all("Poverty Status in the Past 12 Months for Households", "Poverty Status in the Past 12 Months by Household Type by Age of Householder")
+    str_replace_all("Poverty Status in the Past 12 Months for Households", "Poverty Status in the Past 12 Months by Household Type by Age of Householder") |>
+    str_replace_all("College Enrollment", "Sex by School Enrollment by Level of School by Type of School for the Population 3 Years and Over")
 
   out_fc <- out_params[[1]]
 
-  state_info <- tigris::states(year = 2023, progress_bar = FALSE) |>
+  state_info <- tigris::states(year = acs_year, progress_bar = FALSE) |>
     st_transform(4326) |>
     st_intersection(study_area_sf) |>
     st_drop_geometry() |>
@@ -34,9 +36,9 @@ tool_exec <- function(in_params, out_params) {
 
   arc.progress_pos(40)
 
-  print("Getting ACS 5 year data for 2019-2023...")
+  print("Getting ACS 5 year data...")
 
-  vars <- load_variables(year = 2023, dataset = "acs5") |>
+  vars <- load_variables(year = acs_year, dataset = "acs5") |>
     mutate(
       label = str_replace_all(label, "!!", " "),
       label = str_replace_all(label, ":$", ""),
@@ -67,7 +69,9 @@ tool_exec <- function(in_params, out_params) {
       # Remove drove alone variable; it can be determined in another way
       !(name == "B08301_003"),
       # Remove the total population variable if it is not the total population concept
-      (label != "Estimate Total" | name == "B01003_001" | name == "B25001_001")
+      (label != "Estimate Total" | name == "B01003_001" | name == "B25001_001" | name == "B08301_001"),
+      # Keep only the college student variables
+      !(concept == "Sex by School Enrollment by Level of School by Type of School for the Population 3 Years and Over" & !str_detect(name, "B14002_019|B14002_043|B14002_022|B14002_046"))
     ) |>
     # Rename the labels to be more user friendly
     mutate(
@@ -78,6 +82,8 @@ tool_exec <- function(in_params, out_params) {
       concept = ifelse(concept == "Tenure by Vehicles Available", "Tenure by Vehicles Available for Households", concept),
       # Create a denominator for the variables
       Denominator = case_when(str_detect(concept, "Housing|Household") ~ "Housing Units",
+        str_detect(concept, "Means of Transportation to Work") ~ "Commuters",
+        str_detect(concept, "Population") ~ "Population",
         label == "Estimate Median gross rent" ~ "Other",
         label == "In labor force: Civilian labor force" ~ "Other",
         str_detect(label, "In labor force: Civilian labor force: Employed|In labor force: Civilian labor force: Unemployed") ~ "Labor Force",
@@ -94,12 +100,12 @@ tool_exec <- function(in_params, out_params) {
     geography = "block group",
     variables = variable_codes,
     state = state_info,
-    year = 2023,
+    year = acs_year,
     geometry = TRUE,
     progress = FALSE
   ) |>
     st_transform(4326) |>
-    st_filter(study_area_sf) |>
+    st_filter(study_area_sf, .predicate = st_intersects) |>
     suppressMessages() |>
     suppressWarnings()
 
@@ -111,6 +117,13 @@ tool_exec <- function(in_params, out_params) {
       "total" = "tot",
       "housing units" = "hhs",
       "income" = "inc",
+      "female" = "f",
+      "male" = "m",
+      "college undergrad" = "undergrad",
+      "enrolled in school" = "", # Remove this completely
+      "enrolled in" = "", # Remove this completely
+      "or professional school" = "", # Remove this completely
+      "years" = "", # Remove this completely
       "in the past 12 months" = "", # Remove this completely
       " at or" = "", # Remove this completely
       "for the " = "", # Remove this completely
@@ -171,6 +184,7 @@ tool_exec <- function(in_params, out_params) {
     mutate(
       concept = case_when(concept == "Household Language by Household Limited English Speaking Status" ~ "Limited English Households",
         concept == "Tenure by Vehicles Available" ~ "Vehicle Availablility",
+        concept == "Sex by School Enrollment by Level of School by Type of School for the Population 3 Years and Over" ~ "College Enrollment",
         .default = concept
       ),
       label = case_when(concept == "Limited English Households" ~ "Limited English Households",
@@ -201,6 +215,11 @@ tool_exec <- function(in_params, out_params) {
       across(
         ends_with("_labor_force"), # select columns ending in _labor_force
         ~ (.x / ilf_other) * 100, # transformation
+        .names = "{.col}_pct" # name of new columns
+      ),
+      across(
+        ends_with("_commuters") & !matches("tot_commuters"), # select columns ending in _commuters
+        ~ (.x / est_tot_commuters) * 100, # transformation
         .names = "{.col}_pct" # name of new columns
       )
     ) |>
