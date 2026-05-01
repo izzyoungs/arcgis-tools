@@ -203,8 +203,9 @@ base_data AS (
   JOIN `replica-customer.{region}.{region}_{year}_{quarter}_population` pop
     ON t.person_id = pop.person_id
   CROSS JOIN equity_areas ea
+  CROSS JOIN aoe
   WHERE t.travel_purpose != 'HOME' AND t.mode != 'commercial' AND pop.school_grade_attending = 'not_attending_school'
-  AND (ST_WITHIN(ST_GEOGPOINT(t.start_lng, t.start_lat), ea.geom) OR ST_WITHIN(ST_GEOGPOINT(t.end_lng, t.end_lat), ea.geom))
+  AND (ST_WITHIN(ST_GEOGPOINT(t.start_lng, t.start_lat), aoe.geom) OR ST_WITHIN(ST_GEOGPOINT(t.end_lng, t.end_lat), aoe.geom))
   GROUP BY stableEdgeId, v_mode, is_equity_area
 ),
 
@@ -310,6 +311,9 @@ SELECT
 FROM loaded_network;", .con = DBI::ANSI()) |>
     suppressMessages() |>
     suppressWarnings()
+
+  # Print the SQL query for debugging
+  print(sql_query)
 
   # Query BigQuery
   tb <- bq_project_query("replica-customer", sql_query) |>
