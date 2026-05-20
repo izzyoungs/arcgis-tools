@@ -11,7 +11,7 @@ This repository holds a collection of custom ArcGIS Geoprocessing scripts for Ar
 ## Get Data Toolbox
 * *Enrich Study Area with Census Data* - **This tool is under development**. It will grab ACS variables and enrich the input features based on variables and proportional allocation. 
 * *Get ACS for a Study Area* - This tool returns ACS data for the selected study area for select ACS concepts. Some data processing and cleaning is done on the back end for more out-of-the-box usable varaibles. 
-* *Get Overture or OSM Data* - This tool returns OSM and/or Overture points, lines, or polygons for the bounding box of a selected study area.
+* *Get Overture or OSM Data* - **This tool is under development, The lines and polygons for Overture data are currently not working**. This tool returns OSM and/or Overture points, lines, or polygons for the bounding box of a selected study area.
 * *Generate Isochrones from Geometry* - This tool returns isochrones for points or lines using Kyle Walker's [mapboxapi](https://walker-data.com/mapboxapi/) library. Custom modes and time bands can be set. 
 
 ## Replica Toolbox
